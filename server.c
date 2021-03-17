@@ -43,7 +43,7 @@ void loadDatabase(char **usernames, char **passwords, int *userCount)
         read = fscanf(dbPtr, "%s\n%s", usernames[i], passwords[i]);
         printf("%s %s", usernames[i], passwords[i]);
     }
-
+    *userCount = i;
     fclose(dbPtr);
 }
 
@@ -106,10 +106,11 @@ int main(int argc, char *argv[])
     for (i = 0; i < MAXCLIENTS; i++)
     {
         c_sockets[i] = -1;
-        usernames = malloc(MAX_DB_SIZE)
+        usernames = malloc(MAX_DB_SIZE * MAX_NAME_LENGTH);
+        passwords = malloc(MAX_DB_SIZE * MAX_PASSWORD_LENGTH);
     }
 
-    loadDatabase(usernames, passwords);
+    loadDatabase(usernames, passwords, &loadedUsers);
 
     for (;;)
     {
