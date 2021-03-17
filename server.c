@@ -6,6 +6,7 @@
 #include <sys/select.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 #define BUFFLEN 1024
 #define MAXCLIENTS 10
@@ -13,19 +14,20 @@
 #define MAX_PASSWORD_LENGTH 64
 #define MAX_DB_SIZE 1000
 
-struct User
+typedef struct
 {
-    char username[MAX_NAME_LENGTH];
-    char password[MAX_PASSWORD_LENGTH];
-    int userSocket;
-} user;
+    char *username;
+    char *password;
+    int socket;
+    bool isAuthenticated;
+} User;
 
-int findemptyuser(int c_sockets[])
+int findemptyuser(User *users)
 {
     int i;
     for (i = 0; i < MAXCLIENTS; i++)
     {
-        if (c_sockets[i] == -1)
+        if (users[i].socket == -1)
         {
             return i;
         }
@@ -33,15 +35,27 @@ int findemptyuser(int c_sockets[])
     return -1;
 }
 
-void loadDatabase(char **usernames, char **passwords, int *userCount)
+int findUserID(char *username, char usernames[MAX_DB_SIZE][MAX_NAME_LENGTH], int userCount)
+{
+    printf("%s %s\n", username, usernames[0]);
+    for (int i = 0; i < userCount; i++)
+    {
+        if (strcmp(username, usernames[i]) == 0)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void loadDatabase(char usernames[MAX_DB_SIZE][MAX_NAME_LENGTH], char passwords[MAX_DB_SIZE][MAX_PASSWORD_LENGTH], int *userCount)
 {
     FILE *dbPtr = fopen("db.txt", "r");
-    int i = 0;
-    int read = fscanf(dbPtr, "%s\n%s", usernames[i], passwords[i]);
-    for (i = 1; read == 2 && read != EOF; i++)
+    int read = fscanf(dbPtr, "%s%s", &usernames[0], &passwords[0]);
+    int i;
+    for (i = 1; read == 2 && !feof(dbPtr); i++)
     {
-        read = fscanf(dbPtr, "%s\n%s", usernames[i], passwords[i]);
-        printf("%s %s", usernames[i], passwords[i]);
+        read = fscanf(dbPtr, "%s%s", &usernames[i], &passwords[i]);
     }
     *userCount = i;
     fclose(dbPtr);
@@ -49,14 +63,14 @@ void loadDatabase(char **usernames, char **passwords, int *userCount)
 
 int main(int argc, char *argv[])
 {
-    char(*usernames)[MAX_NAME_LENGTH];
-    char(*passwords)[MAX_PASSWORD_LENGTH];
+    char usernames[MAX_DB_SIZE][MAX_NAME_LENGTH];
+    char passwords[MAX_DB_SIZE][MAX_PASSWORD_LENGTH];
     int loadedUsers = 0;
-    struct User users[MAXCLIENTS];
+    User users[MAXCLIENTS];
     unsigned int port;
     unsigned int clientaddrlen;
     int l_socket;
-    int c_sockets[MAXCLIENTS];
+    //int c_sockets[MAXCLIENTS];
     fd_set read_set;
 
     struct sockaddr_in servaddr;
@@ -72,7 +86,6 @@ int main(int argc, char *argv[])
         fprintf(stderr, "USAGE: %s <port>\n", argv[0]);
         return -1;
     }
-
     port = atoi(argv[1]);
     if ((port < 1) || (port > 65535))
     {
@@ -105,24 +118,29 @@ int main(int argc, char *argv[])
 
     for (i = 0; i < MAXCLIENTS; i++)
     {
-        c_sockets[i] = -1;
-        usernames = malloc(MAX_DB_SIZE * MAX_NAME_LENGTH);
-        passwords = malloc(MAX_DB_SIZE * MAX_PASSWORD_LENGTH);
+        users[i].socket = -1;
+        users[i].username = malloc(MAX_NAME_LENGTH * sizeof(char));
+        users[i].password = malloc(MAX_PASSWORD_LENGTH * sizeof(char));
+        users[i].username = "";
+        users[i].password = "";
+        users[i].isAuthenticated = false;
     }
-
     loadDatabase(usernames, passwords, &loadedUsers);
+    printf("hi\n");
 
+    printf("%s %s\n", usernames[0], passwords[0]);
+    printf("%s %s\n", usernames[1], passwords[1]);
     for (;;)
     {
         FD_ZERO(&read_set);
         for (i = 0; i < MAXCLIENTS; i++)
         {
-            if (c_sockets[i] != -1)
+            if (users[i].socket != -1)
             {
-                FD_SET(c_sockets[i], &read_set);
-                if (c_sockets[i] > maxfd)
+                FD_SET(users[i].socket, &read_set);
+                if (users[i].socket > maxfd)
                 {
-                    maxfd = c_sockets[i];
+                    maxfd = users[i].socket;
                 }
             }
         }
@@ -134,45 +152,85 @@ int main(int argc, char *argv[])
         }
 
         select(maxfd + 1, &read_set, NULL, NULL, NULL);
-
+        int client_id;
         if (FD_ISSET(l_socket, &read_set))
         {
-            int client_id = findemptyuser(c_sockets);
+            client_id = findemptyuser(users);
             if (client_id != -1)
             {
                 clientaddrlen = sizeof(clientaddr);
                 memset(&clientaddr, 0, clientaddrlen);
-                c_sockets[client_id] = accept(l_socket,
-                                              (struct sockaddr *)&clientaddr, &clientaddrlen);
+                users[client_id].socket = accept(l_socket,
+                                                 (struct sockaddr *)&clientaddr, &clientaddrlen);
+
                 printf("Connected:  %s\n", inet_ntoa(clientaddr.sin_addr));
+
+                int m_len = sprintf(buffer, "Username: \n");
+                send(users[client_id].socket, buffer, m_len, 0);
             }
         }
         for (i = 0; i < MAXCLIENTS; i++)
         {
-            if (c_sockets[i] != -1)
+            if (users[i].socket != -1)
             {
-                if (FD_ISSET(c_sockets[i], &read_set))
+                //int newUser = strcmp(users[i].username, "");
+                if (FD_ISSET(users[i].socket, &read_set))
                 {
-                    memset(&buffer, 0, BUFFLEN);
-                    int r_len = recv(c_sockets[i], &buffer, BUFFLEN, 0);
 
-                    int j;
-                    for (j = 0; j < MAXCLIENTS; j++)
+                    if (users[i].isAuthenticated)
                     {
-                        if (c_sockets[j] != -1 && i != j)
+                        memset(&buffer, 0, BUFFLEN);
+                        int r_len = recv(users[i].socket, &buffer, BUFFLEN, 0);
+
+                        int j;
+                        for (j = 0; j < MAXCLIENTS; j++)
                         {
-                            int w_len = send(c_sockets[j], buffer, r_len, 0);
-                            if (w_len <= 0)
+                            //int newUser = strcmp(users[i].username, "");
+                            if (users[j].socket != -1 && i != j) // && users[j].isAuthenticated
                             {
-                                close(c_sockets[j]);
-                                c_sockets[j] = -1;
+                                int w_len = send(users[j].socket, buffer, r_len, 0);
+                                if (w_len <= 0)
+                                {
+                                    close(users[j].socket);
+                                    users[j].socket = -1;
+                                }
                             }
                         }
+                    }
+                    else if (!users[i].isAuthenticated && users[i].username == "")
+                    {
+                        memset(&buffer, 0, BUFFLEN);
+                        int r_len = recv(users[client_id].socket, &buffer, BUFFLEN, 0);
+                        //printf("%s\n", buffer);
+                        buffer[strlen(buffer) - 1] = '\0';
+                        int id = findUserID(buffer, usernames, loadedUsers);
+                        printf("Returned id: %i\n", id);
+                        if (id >= 0)
+                        {
+                            users[i].username = usernames[id];
+                            //users[client_id].password = passwords[id];
+                        }
+                        else
+                        {
+                            loadedUsers++;
+                            users[i].username = buffer;
+                            strcpy(usernames[loadedUsers - 1], buffer);
+                        }
+                        int m_len = sprintf(buffer, "Password: \n");
+                        send(users[i].socket, buffer, m_len, 0);
+                    }
+                    else
+                    {
+                        memset(&buffer, 0, BUFFLEN);
+                        int r_len = recv(users[client_id].socket, &buffer, BUFFLEN, 0);
+                        users[i].password = buffer;
+                        users[i].isAuthenticated = true;
+                        printf("password? %s\n", buffer);
                     }
                 }
             }
         }
     }
-
+    close(l_socket);
     return 0;
 }
