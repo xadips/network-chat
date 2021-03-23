@@ -14,8 +14,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 #define BUFFLEN 1024
+#define MAX_NAME_LENGTH 21
+#define MAX_PASSWORD_LENGTH 64
 
 int main(int argc, char *argv[])
 {
@@ -77,9 +80,79 @@ int main(int argc, char *argv[])
         fprintf(stderr, "ERROR #4: error in connect().\n");
         exit(1);
     }
+
+    bool isAuthenticated = false;
+    char tempName[MAX_NAME_LENGTH];
+    char tempPassword[MAX_PASSWORD_LENGTH];
+
     memset(&sendbuffer, 0, BUFFLEN);
+
+    fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) & ~O_NONBLOCK); // making sure that stdin is blocking by masking inverse
+
+    while (!isAuthenticated)
+    {
+        memset(&tempName, '\0', MAX_NAME_LENGTH);
+        memset(&tempPassword, '\0', MAX_PASSWORD_LENGTH);
+
+        printf("Username: ");
+        fgets(tempName, MAX_NAME_LENGTH, stdin);
+
+        if (strcmp(tempName, "/q\n\0") == 0)
+        {
+            break;
+        }
+
+        printf("Password: ");
+        fgets(tempPassword, MAX_PASSWORD_LENGTH, stdin);
+
+        if (strcmp(tempPassword, "/q\n\0") == 0)
+        {
+            break;
+        }
+
+        memset(&sendbuffer, 0, BUFFLEN);
+
+        strcpy(sendbuffer, tempName);
+        strcpy(sendbuffer + MAX_NAME_LENGTH, tempPassword);
+        write(s_socket, sendbuffer, MAX_NAME_LENGTH + MAX_PASSWORD_LENGTH);
+
+        while (1)
+        {
+            FD_ZERO(&read_set);
+            FD_SET(s_socket, &read_set);
+            select(s_socket + 1, &read_set, NULL, NULL, NULL);
+
+            if (FD_ISSET(s_socket, &read_set))
+            {
+                memset(&recvbuffer, 0, BUFFLEN);
+                i = read(s_socket, &recvbuffer, BUFFLEN);
+                if (i <= 0)
+                {
+                    printf("Connection lost\n");
+                    isAuthenticated = false;
+                    break;
+                }
+                else
+                {
+                    if (strcmp(recvbuffer, "0\n\0") == 0)
+                    {
+                        printf("Wrong username or account already online!\n");
+                        break;
+                    }
+                    else
+                    {
+                        isAuthenticated = true;
+                        printf("%s\n", recvbuffer);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) | O_NONBLOCK);
-    while (1)
+
+    while (isAuthenticated)
     {
         FD_ZERO(&read_set);
         FD_SET(s_socket, &read_set);
@@ -91,15 +164,35 @@ int main(int argc, char *argv[])
         {
             memset(&recvbuffer, 0, BUFFLEN);
             i = read(s_socket, &recvbuffer, BUFFLEN);
-            printf("%s", recvbuffer);
+            if (i <= 0)
+            {
+                printf("Connection lost\n");
+                break;
+            }
+            else
+            {
+                printf("%s\n", recvbuffer);
+            }
         }
         else if (FD_ISSET(0, &read_set))
         {
+            memset(&sendbuffer, '\0', BUFFLEN);
             i = read(0, &sendbuffer, BUFFLEN);
-            write(s_socket, sendbuffer, i);
+            if (i > 0)
+            {
+                if (strcmp(sendbuffer, "/q\n\0") == 0)
+                {
+                    isAuthenticated = false;
+                }
+                else
+                {
+                    write(s_socket, sendbuffer, i);
+                }
+            }
         }
     }
 
     close(s_socket);
+
     return 0;
 }

@@ -7,6 +7,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <fcntl.h>
 
 #define BUFFLEN 1024
 #define MAXCLIENTS 10
@@ -35,12 +36,12 @@ int findemptyuser(User *users)
     return -1;
 }
 
-int findUserID(char *username, char usernames[MAX_DB_SIZE][MAX_NAME_LENGTH], int userCount)
+int findUserID(char *username, char *password, char usernames[MAX_DB_SIZE][MAX_NAME_LENGTH], char passwords[MAX_DB_SIZE][MAX_PASSWORD_LENGTH], int userCount)
 {
     printf("%s %s\n", username, usernames[0]);
     for (int i = 0; i < userCount; i++)
     {
-        if (strcmp(username, usernames[i]) == 0)
+        if (strcmp(username, usernames[i]) == 0 && strcmp(password, passwords[i]) == 0)
         {
             return i;
         }
@@ -61,6 +62,36 @@ void loadDatabase(char usernames[MAX_DB_SIZE][MAX_NAME_LENGTH], char passwords[M
     fclose(dbPtr);
 }
 
+void sendAll(User users[], char buffer[], int excludeSocket)
+{ // sends a message in buffer to all logged in users
+    printf("%s\n", buffer);
+    for (int i = 0; i < MAXCLIENTS; i++)
+    {
+        if (users[i].socket != -1)
+        {
+            if (users[i].isAuthenticated)
+            {
+                int writeLength = send(users[i].socket, buffer, strlen(buffer), 0);
+                if (writeLength <= 0)
+                {
+                    printf("Disconnected: %d, %s\n", users[i].socket, users[i].username);
+                    users[i].socket = -1;
+                    users[i].isAuthenticated = false;
+                    strcpy(users[i].username, "");
+                    close(users[i].socket);
+                }
+            }
+        }
+    }
+}
+
+void registerUser(char *username, char *password)
+{
+    FILE *wrPtr = fopen("db.txt", "a");
+    fprintf(wrPtr, "\n%s\n%s", username, password);
+    fclose(wrPtr);
+}
+
 int main(int argc, char *argv[])
 {
     char usernames[MAX_DB_SIZE][MAX_NAME_LENGTH];
@@ -79,7 +110,7 @@ int main(int argc, char *argv[])
     int maxfd = 0;
     int i;
 
-    char buffer[BUFFLEN];
+    char buffer[BUFFLEN], buffer2[BUFFLEN + MAX_NAME_LENGTH + 2];
 
     if (argc != 2)
     {
@@ -126,12 +157,16 @@ int main(int argc, char *argv[])
         users[i].isAuthenticated = false;
     }
     loadDatabase(usernames, passwords, &loadedUsers);
-    oldCount = loadedUsers;
+
     printf("%s %s\n", usernames[0], passwords[0]);
     printf("%s %s\n", usernames[1], passwords[1]);
+
+    fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) | O_NONBLOCK); // making stdin socked non-blocking
+
     for (;;)
     {
         FD_ZERO(&read_set);
+        FD_SET(0, &read_set);
         for (i = 0; i < MAXCLIENTS; i++)
         {
             if (users[i].socket != -1)
@@ -158,16 +193,35 @@ int main(int argc, char *argv[])
             if (client_id != -1)
             {
                 clientaddrlen = sizeof(clientaddr);
-                memset(&clientaddr, 0, clientaddrlen);
-                users[client_id].socket = accept(l_socket,
-                                                 (struct sockaddr *)&clientaddr, &clientaddrlen);
-
+                memset(&clientaddr, '\0', clientaddrlen);
+                users[client_id].socket = accept(l_socket, (struct sockaddr *)&clientaddr, &clientaddrlen);
                 printf("Connected:  %s\n", inet_ntoa(clientaddr.sin_addr));
 
-                int m_len = sprintf(buffer, "Username: \n");
-                send(users[client_id].socket, buffer, m_len, 0);
+                //int m_len = sprintf(buffer, "Username: \n");
+                //send(users[client_id].socket, buffer, m_len, 0);
             }
         }
+
+        if (FD_ISSET(0, &read_set))
+        { // stdin -> might want to close server with /q
+            memset(&buffer, 0, BUFFLEN);
+            int i = read(0, &buffer, BUFFLEN);
+            if (i > 0)
+            {
+                printf("%s\n", buffer);
+                if (strcmp(buffer, "exit\n\0") == 0)
+                {
+                    break;
+                }
+                else
+                {
+                    memset(&buffer2, '\0', BUFFLEN + MAX_NAME_LENGTH + 2);
+                    sprintf(buffer2, "Server: %s", buffer);
+                    sendAll(users, buffer2, -2);
+                }
+            }
+        }
+
         for (i = 0; i < MAXCLIENTS; i++)
         {
             if (users[i].socket != -1)
@@ -175,83 +229,80 @@ int main(int argc, char *argv[])
                 //int newUser = strcmp(users[i].username, "");
                 if (FD_ISSET(users[i].socket, &read_set))
                 {
-
-                    if (users[i].isAuthenticated)
+                    memset(&buffer, 0, BUFFLEN);
+                    int r_len = recv(users[i].socket, &buffer, BUFFLEN, 0);
+                    if (r_len <= 0)
                     {
-                        memset(&buffer, 0, BUFFLEN);
-                        int r_len = recv(users[i].socket, &buffer, BUFFLEN, 0);
+                        printf("Disconnected: %i", users[i].socket);
+                        users[i].socket = -1;
+                        users[i].isAuthenticated = false;
+                        users[i].username = "";
+                        users[i].password = "";
 
-                        int j;
-                        for (j = 0; j < MAXCLIENTS; j++)
-                        {
-                            //int newUser = strcmp(users[i].username, "");
-                            if (users[j].socket != -1 && i != j) // && users[j].isAuthenticated
-                            {
-                                char tempBuf[BUFFLEN];
-                                memset(&tempBuf, 0, BUFFLEN);
-                                printf("%s\n", users[i].username);
-                                int w_len = send(users[j].socket, tempBuf, strlen(tempBuf), 0);
-                                if (w_len <= 0)
-                                {
-                                    close(users[j].socket);
-                                    users[j].socket = -1;
-                                }
-                            }
-                        }
+                        close(users[i].socket);
                     }
-                    else if (!users[i].isAuthenticated && strcmp(users[i].username, "") == 0)
+                    else if (users[i].isAuthenticated)
                     {
-                        memset(&buffer, 0, BUFFLEN);
-                        int r_len = recv(users[client_id].socket, &buffer, BUFFLEN, 0);
+                        memset(&buffer2, '\0', BUFFLEN + MAX_NAME_LENGTH);
+                        sprintf(buffer2, "%s: %s", users[i].username, buffer);
+
+                        sendAll(users, buffer2, users[i].socket);
+                    }
+                    else if (!users[i].isAuthenticated)
+                    {
+                        char tempUsername[MAX_NAME_LENGTH];
+                        char tempPassword[MAX_PASSWORD_LENGTH];
+                        strcpy(tempUsername, buffer);
+                        strcpy(tempPassword, buffer + MAX_NAME_LENGTH);
+                        tempUsername[strlen(tempUsername) - 1] = '\0';
+                        tempPassword[strlen(tempPassword) - 1] = '\0';
                         //printf("%s\n", buffer);
-                        buffer[strlen(buffer) - 1] = '\0';
-                        int id = findUserID(buffer, usernames, loadedUsers);
+
+                        int id = findUserID(tempUsername, tempPassword, usernames, passwords, loadedUsers);
                         printf("Returned id: %i\n", id);
                         if (id >= 0)
                         {
                             users[i].username = usernames[id];
                             users[i].password = passwords[id];
-                        }
-                        else
-                        {
-                            loadedUsers++;
-                            users[i].username = buffer;
-                            strcpy(usernames[loadedUsers - 1], buffer);
-                        }
-                        int m_len = sprintf(buffer, "Password: \n");
-                        send(users[i].socket, buffer, m_len, 0);
-                    }
-                    else if (!users[i].isAuthenticated)
-                    {
-                        memset(&buffer, 0, BUFFLEN);
-                        int r_len = recv(users[client_id].socket, &buffer, BUFFLEN, 0);
-                        buffer[strlen(buffer) - 1] = '\0';
-                        if (strcmp(buffer, users[i].password) == 0 || strcmp(users[i].password, "") == 0)
-                        {
-                            printf("%s %s\n", buffer, passwords[i]);
+                            memset(&buffer, '\0', BUFFLEN);
+                            sprintf(buffer, "Welcome to the server %s\n", users[i].username);
                             users[i].isAuthenticated = true;
-                            users[i].password = buffer;
+                            sendAll(users, buffer, -2);
                         }
                         else
                         {
-                            int m_len = sprintf(buffer, "Wrong password try again! \n");
-                            send(users[i].socket, buffer, m_len, 0);
+                            int w_len = send(users[i].socket, "0\n\0", 3, 0);
+                            if (w_len <= 0)
+                            {
+                                printf("Disconnected: %i\n", users[i].socket);
+                                close(users[i].socket = -1);
+                                users[i].isAuthenticated = false;
+                                users[i].username = "";
+                            }
+                            //loadedUsers++;
+                            //users[i].username = tempUsername;
+                            //registerUser(tempUsername, tempPassword);
+                            //strcpy(usernames[loadedUsers - 1], buffer);
+
+                            //memset(&buffer, '\0', BUFFLEN);
+                            //sprintf(buffer, "A new user registered here %s\n", users[i].username);
+
+                            //sendAll(users, buffer, -2);
                         }
-                        //printf("password? %s\n", buffer);
                     }
                 }
             }
         }
     }
 
-    if (loadedUsers > oldCount)
+    for (int i = 0; i < MAXCLIENTS; ++i)
     {
-        for (int i = oldCount; i < loadedUsers; i++)
+        if (users[i].socket != -1)
         {
-            FILE *wrPtr = fopen("db.txt", "a");
-            fprintf(wrPtr, "\n%s\n%s", usernames[i], passwords[i]);
+            close(users[i].socket);
         }
     }
+
     close(l_socket);
 
     return 0;
