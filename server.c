@@ -65,7 +65,7 @@ int main(int argc, char *argv[])
 {
     char usernames[MAX_DB_SIZE][MAX_NAME_LENGTH];
     char passwords[MAX_DB_SIZE][MAX_PASSWORD_LENGTH];
-    int loadedUsers = 0;
+    int oldCount = 0, loadedUsers = 0;
     User users[MAXCLIENTS];
     unsigned int port;
     unsigned int clientaddrlen;
@@ -126,8 +126,7 @@ int main(int argc, char *argv[])
         users[i].isAuthenticated = false;
     }
     loadDatabase(usernames, passwords, &loadedUsers);
-    printf("hi\n");
-
+    oldCount = loadedUsers;
     printf("%s %s\n", usernames[0], passwords[0]);
     printf("%s %s\n", usernames[1], passwords[1]);
     for (;;)
@@ -188,7 +187,10 @@ int main(int argc, char *argv[])
                             //int newUser = strcmp(users[i].username, "");
                             if (users[j].socket != -1 && i != j) // && users[j].isAuthenticated
                             {
-                                int w_len = send(users[j].socket, buffer, r_len, 0);
+                                char tempBuf[BUFFLEN];
+                                memset(&tempBuf, 0, BUFFLEN);
+                                printf("%s\n", users[i].username);
+                                int w_len = send(users[j].socket, tempBuf, strlen(tempBuf), 0);
                                 if (w_len <= 0)
                                 {
                                     close(users[j].socket);
@@ -197,7 +199,7 @@ int main(int argc, char *argv[])
                             }
                         }
                     }
-                    else if (!users[i].isAuthenticated && users[i].username == "")
+                    else if (!users[i].isAuthenticated && strcmp(users[i].username, "") == 0)
                     {
                         memset(&buffer, 0, BUFFLEN);
                         int r_len = recv(users[client_id].socket, &buffer, BUFFLEN, 0);
@@ -208,7 +210,7 @@ int main(int argc, char *argv[])
                         if (id >= 0)
                         {
                             users[i].username = usernames[id];
-                            //users[client_id].password = passwords[id];
+                            users[i].password = passwords[id];
                         }
                         else
                         {
@@ -219,18 +221,38 @@ int main(int argc, char *argv[])
                         int m_len = sprintf(buffer, "Password: \n");
                         send(users[i].socket, buffer, m_len, 0);
                     }
-                    else
+                    else if (!users[i].isAuthenticated)
                     {
                         memset(&buffer, 0, BUFFLEN);
                         int r_len = recv(users[client_id].socket, &buffer, BUFFLEN, 0);
-                        users[i].password = buffer;
-                        users[i].isAuthenticated = true;
-                        printf("password? %s\n", buffer);
+                        buffer[strlen(buffer) - 1] = '\0';
+                        if (strcmp(buffer, users[i].password) == 0 || strcmp(users[i].password, "") == 0)
+                        {
+                            printf("%s %s\n", buffer, passwords[i]);
+                            users[i].isAuthenticated = true;
+                            users[i].password = buffer;
+                        }
+                        else
+                        {
+                            int m_len = sprintf(buffer, "Wrong password try again! \n");
+                            send(users[i].socket, buffer, m_len, 0);
+                        }
+                        //printf("password? %s\n", buffer);
                     }
                 }
             }
         }
     }
+
+    if (loadedUsers > oldCount)
+    {
+        for (int i = oldCount; i < loadedUsers; i++)
+        {
+            FILE *wrPtr = fopen("db.txt", "a");
+            fprintf(wrPtr, "\n%s\n%s", usernames[i], passwords[i]);
+        }
+    }
     close(l_socket);
+
     return 0;
 }
