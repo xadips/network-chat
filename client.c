@@ -145,6 +145,7 @@ int main(int argc, char *argv[])
     // Reset stdin blocking, let the  chatting begin
     fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) | O_NONBLOCK);
 
+    // Once authenticated read messages
     while (isAuthenticated)
     {
         // Clear waiting, then set it for server and stdin
