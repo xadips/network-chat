@@ -1,5 +1,7 @@
 # IRC's little bro
 
+Only works in Linux systems for now
+C 099
 
 ## Building
 ```
