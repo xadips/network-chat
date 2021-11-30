@@ -63,11 +63,11 @@ int loginUser(char *username, char *password, char usernames[MAX_DB_SIZE][MAX_NA
 void loadDatabase(char usernames[MAX_DB_SIZE][MAX_NAME_LENGTH], char passwords[MAX_DB_SIZE][MAX_PASSWORD_LENGTH], int *userCount)
 {
     FILE *dbPtr = fopen("db.txt", "r");
-    int read = fscanf(dbPtr, "%s%s", &usernames[0], &passwords[0]);
+    int read = fscanf(dbPtr, "%s%s", usernames[0], passwords[0]);
     int i;
     for (i = 1; read == 2 && !feof(dbPtr); i++)
     {
-        read = fscanf(dbPtr, "%s%s", &usernames[i], &passwords[i]);
+        read = fscanf(dbPtr, "%s%s", usernames[i], passwords[i]);
     }
     *userCount = i;
     fclose(dbPtr);
