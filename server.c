@@ -15,8 +15,9 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <fcntl.h>
+#include <netdb.h>
 
-#define BUFFER_LENGTH 1024
+#define BUFFER_LENGTH 982 
 #define MAX_CLIENTS 10
 #define MAX_NAME_LENGTH 21
 #define MAX_PASSWORD_LENGTH 64
@@ -111,15 +112,14 @@ void registerUser(char *username, char *password)
 
 int main(int argc, char *argv[])
 {
-    char usernames[MAX_DB_SIZE][MAX_NAME_LENGTH], passwords[MAX_DB_SIZE][MAX_PASSWORD_LENGTH];
-    int loadedUsers = 0, maxfd = 0, i, localSocket;
+    struct addrinfo hints;
+    struct addrinfo *result, *rp;
+    char usernames[MAX_DB_SIZE][MAX_NAME_LENGTH], passwords[MAX_DB_SIZE][MAX_PASSWORD_LENGTH], inBuffer[BUFFER_LENGTH], outBuffer[BUFFER_LENGTH + MAX_NAME_LENGTH * 2];
+    int loadedUsers = 0, maxfd = 0, i, localSocket, s;
     User users[MAX_CLIENTS];
     unsigned int serverPort, clientAddressLength;
     fd_set readSet;
-
-    struct sockaddr_in serverAddress, clientAddress;
-
-    char inBuffer[BUFFER_LENGTH], outBuffer[BUFFER_LENGTH + MAX_NAME_LENGTH * 2];
+    struct sockaddr_in clientAddress;
 
     if (argc != 2)
     {
@@ -135,23 +135,41 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    if ((localSocket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;    /* Allow IPv4 or IPv6 */
+    hints.ai_socktype = SOCK_STREAM; /* Datagram socket */
+    hints.ai_flags = 0;    /* For wildcard IP address */
+    hints.ai_protocol = 0;          /* Any protocol */
+    hints.ai_canonname = NULL;
+    hints.ai_addr = NULL;
+    hints.ai_next = NULL;
+
+    s = getaddrinfo(NULL, argv[1], &hints, &result);
+    if (s != 0) 
     {
-        fprintf(stderr, "ERROR: cannot create listening socket.\n");
-        return -1;
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
+        exit(EXIT_FAILURE);
     }
 
-    // We're using the IP protocol, so clear the structure and set the port
-    memset(&serverAddress, 0, sizeof(serverAddress));
-    serverAddress.sin_family = AF_INET;
-    serverAddress.sin_addr.s_addr = htonl(INADDR_ANY);
-    serverAddress.sin_port = htons(serverPort);
-
-    // Don't use a taken port, thanks
-    if (bind(localSocket, (struct sockaddr *)&serverAddress, sizeof(serverAddress)) < 0)
+    for (rp = result; rp != NULL; rp = rp->ai_next) 
     {
-        fprintf(stderr, "ERROR: bind listening socket.\n");
-        return -1;
+        localSocket = socket(rp->ai_family, rp->ai_socktype,
+                rp->ai_protocol);
+        if (localSocket == -1)
+            continue;
+
+        if (bind(localSocket, rp->ai_addr, rp->ai_addrlen) == 0)
+            break;                  // Success
+
+        close(localSocket);
+    }
+    freeaddrinfo(result);         
+
+    if (rp == NULL) 
+    {               
+        fprintf(stderr, "Could not bind\n");
+        exit(EXIT_FAILURE);
     }
 
     if (listen(localSocket, 5) < 0)
@@ -321,3 +339,4 @@ int main(int argc, char *argv[])
 
     return 0;
 }
+

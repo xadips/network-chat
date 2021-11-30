@@ -1,3 +1,4 @@
+
 /*
  * Chat client
  * 
@@ -12,6 +13,7 @@
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <netdb.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdbool.h>
@@ -23,13 +25,11 @@
 int main(int argc, char *argv[])
 {
     unsigned int clientPort;
-    int serverSocket, i;
-    struct sockaddr_in serverAddress;
+    int serverSocket, i, s;
     fd_set readSet;
 
-    char inBuffer[BUFFER_LENGTH], outBuffer[BUFFER_LENGTH];
+    char buffer[BUFFER_LENGTH];
 
-    // Expectcs a correct amount of arguments
     if (argc != 3)
     {
         fprintf(stderr, "USAGE: %s <ip> <port>\n", argv[0]);
@@ -44,38 +44,47 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    // Server socket - up
-    if ((serverSocket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-    {
-        fprintf(stderr, "ERROR: cannot create socket.\n");
-        exit(1);
+
+    struct addrinfo hints;
+    struct addrinfo *result, *rp;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET; // IPv4
+    hints.ai_socktype = SOCK_STREAM; // TCP pls
+    hints.ai_flags = 0;
+    hints.ai_protocol = 0;          // Any protocol
+
+    s = getaddrinfo(argv[1], argv[2], &hints, &result);
+    if (s != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
+        exit(EXIT_FAILURE);
     }
 
-    // Clear and set server structure
-    memset(&serverAddress, 0, sizeof(serverAddress));
-    // Setting protocol(IP) and port(cPort)
-    serverAddress.sin_family = AF_INET;
-    serverAddress.sin_port = htons(clientPort);
+    for (rp = result; rp != NULL; rp = rp->ai_next) {
+        serverSocket = socket(rp->ai_family, rp->ai_socktype,
+                     rp->ai_protocol);
+        if (serverSocket == -1)
+            continue;
 
-    // Convert IPv4 address into binary form
-    if (inet_aton(argv[1], &serverAddress.sin_addr) <= 0)
-    {
-        fprintf(stderr, "ERROR: Invalid remote IP address.\n");
-        exit(1);
+        if (connect(serverSocket, rp->ai_addr, rp->ai_addrlen) != -1)
+            break;                  // Success
+
+        close(serverSocket);
     }
 
-    // If all good, connect
-    if (connect(serverSocket, (struct sockaddr *)&serverAddress, sizeof(serverAddress)) < 0)
-    {
-        fprintf(stderr, "ERROR: error in connect().\n");
-        exit(1);
+    freeaddrinfo(result);           /* No longer needed */
+
+    if (rp == NULL) {               /* No address succeeded */
+        fprintf(stderr, "Could not connect\n");
+        exit(EXIT_FAILURE);
     }
+
 
     bool isAuthenticated = false;
     char tempName[MAX_NAME_LENGTH];
     char tempPassword[MAX_PASSWORD_LENGTH];
 
-    memset(&outBuffer, 0, BUFFER_LENGTH);
+    memset(&buffer, 0, BUFFER_LENGTH);
     // Block stdin until the user authenticates
     fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) & ~O_NONBLOCK);
 
@@ -101,11 +110,11 @@ int main(int argc, char *argv[])
             break;
         }
 
-        memset(&outBuffer, 0, BUFFER_LENGTH);
+        memset(&buffer, 0, BUFFER_LENGTH);
 
-        strcpy(outBuffer, tempName);
-        strcpy(outBuffer + MAX_NAME_LENGTH, tempPassword);
-        write(serverSocket, outBuffer, MAX_NAME_LENGTH + MAX_PASSWORD_LENGTH);
+        strcpy(buffer, tempName);
+        strcpy(buffer + MAX_NAME_LENGTH, tempPassword);
+        write(serverSocket, buffer, MAX_NAME_LENGTH + MAX_PASSWORD_LENGTH);
 
         // Wait for an authentication response from server, break if all good
         while (true)
@@ -116,8 +125,8 @@ int main(int argc, char *argv[])
 
             if (FD_ISSET(serverSocket, &readSet))
             {
-                memset(&inBuffer, 0, BUFFER_LENGTH);
-                i = read(serverSocket, &inBuffer, BUFFER_LENGTH);
+                memset(&buffer, 0, BUFFER_LENGTH);
+                i = read(serverSocket, &buffer, BUFFER_LENGTH);
                 if (i <= 0)
                 {
                     printf("Connection lost\n");
@@ -126,7 +135,7 @@ int main(int argc, char *argv[])
                 }
                 else
                 {
-                    if (strcmp(inBuffer, "0\n\0") == 0)
+                    if (strcmp(buffer, "0\n\0") == 0)
                     {
                         printf("Wrong username or account already online!\n");
                         break;
@@ -134,7 +143,7 @@ int main(int argc, char *argv[])
                     else
                     {
                         isAuthenticated = true;
-                        printf("%s", inBuffer);
+                        printf("%s", buffer);
                         break;
                     }
                 }
@@ -158,8 +167,8 @@ int main(int argc, char *argv[])
         // If received a message
         if (FD_ISSET(serverSocket, &readSet))
         {
-            memset(&inBuffer, 0, BUFFER_LENGTH);
-            i = read(serverSocket, &inBuffer, BUFFER_LENGTH);
+            memset(&buffer, 0, BUFFER_LENGTH);
+            i = read(serverSocket, &buffer, BUFFER_LENGTH);
             // If received size <= 0, connection was probably lost
             if (i <= 0)
             {
@@ -168,23 +177,23 @@ int main(int argc, char *argv[])
             }
             else
             {
-                printf("%s", inBuffer);
+                printf("%s", buffer);
             }
         }
         // If sent a message
         else if (FD_ISSET(0, &readSet))
         {
-            memset(&outBuffer, '\0', BUFFER_LENGTH);
-            i = read(0, &outBuffer, BUFFER_LENGTH);
+            memset(&buffer, '\0', BUFFER_LENGTH);
+            i = read(0, &buffer, BUFFER_LENGTH);
             if (i > 0)
             {
-                if (strcmp(outBuffer, "/exit\n\0") == 0)
+                if (strcmp(buffer, "/exit\n\0") == 0)
                 {
                     isAuthenticated = false;
                 }
                 else
                 {
-                    write(serverSocket, outBuffer, i);
+                    write(serverSocket, buffer, i);
                 }
             }
         }
@@ -194,3 +203,4 @@ int main(int argc, char *argv[])
 
     return 0;
 }
+
